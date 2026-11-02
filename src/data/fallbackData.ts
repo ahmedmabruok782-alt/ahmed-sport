@@ -5,7 +5,7 @@ import type {
   ScorerRow,
   StandingRow,
   TournamentSummary,
-} from '../types/koora.ts';
+} from '../types/koora';
 
 export const FALLBACK_COMPETITIONS: Record<'ar' | 'en', TournamentSummary[]> = {
   ar: [

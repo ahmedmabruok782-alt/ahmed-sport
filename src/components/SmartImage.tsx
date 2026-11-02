@@ -25,9 +25,10 @@ export function SmartImage({
   fallbackIndex = 0,
   className = '',
 }: SmartImageProps) {
-  const [failed, setFailed] = useState(false);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
 
   const cleanSrc = (src || '').trim();
+  const failed = Boolean(cleanSrc) && failedSrc === cleanSrc;
   const hasValidSrc =
     !failed &&
     cleanSrc.length > 0 &&
@@ -41,7 +42,7 @@ export function SmartImage({
         loading="lazy"
         decoding="async"
         referrerPolicy="no-referrer"
-        onError={() => setFailed(true)}
+        onError={() => setFailedSrc(cleanSrc)}
         className={className}
       />
     );
