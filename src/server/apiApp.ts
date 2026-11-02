@@ -187,6 +187,38 @@ function getQueryString(req: express.Request, name: string): string | undefined 
   return undefined;
 }
 
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function resolveBaseUrl(req: express.Request): string {
+  const rawHost =
+    (typeof req.headers['x-forwarded-host'] === 'string'
+      ? req.headers['x-forwarded-host'].split(',')[0].trim()
+      : '') ||
+    req.headers.host ||
+    'localhost:3000';
+  const safeHost = /^[a-zA-Z0-9.:-]+$/.test(rawHost) ? rawHost : 'localhost:3000';
+
+  const rawProto =
+    typeof req.headers['x-forwarded-proto'] === 'string'
+      ? req.headers['x-forwarded-proto'].split(',')[0].trim().toLowerCase()
+      : '';
+  const proto =
+    rawProto === 'http' || rawProto === 'https'
+      ? rawProto
+      : safeHost.startsWith('localhost') || safeHost.startsWith('127.0.0.1')
+      ? 'http'
+      : 'https';
+
+  return `${proto}://${safeHost}`;
+}
+
 const ALLOWED_MEDIA_MIME = new Set([
   'image/png',
   'image/jpeg',
@@ -218,6 +250,23 @@ export function createApiApp(): express.Express {
 
   // Normalize Vercel Serverless rewrite paths when routed through /api/index
   app.use((req, _res, next) => {
+    const seoParam = getQueryString(req, '__seo');
+    if (seoParam === 'google-verify') {
+      req.url = '/google519f6f89d95e2bc9.html';
+      next();
+      return;
+    }
+    if (seoParam === 'sitemap') {
+      req.url = '/sitemap.xml';
+      next();
+      return;
+    }
+    if (seoParam === 'robots') {
+      req.url = '/robots.txt';
+      next();
+      return;
+    }
+
     const mediaParam = getQueryString(req, '__mediapath');
     if (mediaParam && !req.path.startsWith('/media/')) {
       const cleanMedia = mediaParam.replace(/^\/+/, '');
@@ -245,6 +294,125 @@ export function createApiApp(): express.Express {
     }
 
     next();
+  });
+
+  // Google Search Console verification file fallback route
+  app.get('/google519f6f89d95e2bc9.html', (_req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send('google-site-verification: google519f6f89d95e2bc9.html');
+  });
+
+  // Dynamic robots.txt pointing crawlers to the live domain's /sitemap.xml
+  app.get('/robots.txt', (req, res) => {
+    const baseUrl = resolveBaseUrl(req);
+    const body = [
+      'User-agent: *',
+      'Allow: /',
+      'Disallow: /api/',
+      '',
+      `Sitemap: ${baseUrl}/sitemap.xml`,
+      '',
+    ].join('\n');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600');
+    res.send(body);
+  });
+
+  // Dynamic XML Sitemap (/sitemap.xml) with core sections, leagues, and latest news
+  app.get('/sitemap.xml', async (req, res) => {
+    const baseUrl = resolveBaseUrl(req);
+    const todayIso = new Date().toISOString().slice(0, 10);
+
+    const staticEntries: Array<{
+      path: string;
+      changefreq: string;
+      priority: string;
+      lastmod: string;
+    }> = [
+      { path: '/', changefreq: 'hourly', priority: '1.0', lastmod: todayIso },
+      { path: '/standings', changefreq: 'daily', priority: '0.9', lastmod: todayIso },
+      { path: '/scorers', changefreq: 'daily', priority: '0.8', lastmod: todayIso },
+      { path: '/news', changefreq: 'hourly', priority: '0.9', lastmod: todayIso },
+      { path: '/predictions', changefreq: 'daily', priority: '0.7', lastmod: todayIso },
+      { path: '/search', changefreq: 'weekly', priority: '0.6', lastmod: todayIso },
+    ];
+
+    // Add major competition standings URLs
+    let competitionsList = FALLBACK_COMPETITIONS.ar;
+    try {
+      const compData = (await fetchUpstreamJson(
+        '/api/v1/competitions',
+        { lang: 'ar', v: '20260814' },
+        300_000
+      )) as { competitions?: Array<{ id?: string }> };
+      if (Array.isArray(compData?.competitions) && compData.competitions.length > 0) {
+        competitionsList = compData.competitions.slice(0, 12) as typeof FALLBACK_COMPETITIONS.ar;
+      }
+    } catch {
+      // Fallback competitions used
+    }
+
+    const leagueEntries = competitionsList
+      .filter((c) => c.id && /^[a-zA-Z0-9_-]{1,32}$/.test(String(c.id)))
+      .slice(0, 12)
+      .map((c) => ({
+        path: `/standings?competition=${encodeURIComponent(String(c.id))}`,
+        changefreq: 'daily',
+        priority: '0.8',
+        lastmod: todayIso,
+      }));
+
+    // Add latest news article URLs
+    let newsItems = FALLBACK_NEWS;
+    try {
+      const newsData = (await fetchUpstreamJson(
+        '/api/v1/news',
+        { page: '1', team_id: '', lang: 'ar' },
+        180_000
+      )) as { news?: typeof FALLBACK_NEWS };
+      if (Array.isArray(newsData?.news) && newsData.news.length > 0) {
+        newsItems = newsData.news.slice(0, 20);
+      }
+    } catch {
+      // Fallback news used
+    }
+
+    const newsEntries = newsItems
+      .filter((n) => n.id && /^[a-zA-Z0-9_-]{1,32}$/.test(String(n.id)))
+      .slice(0, 20)
+      .map((n) => {
+        const rawDate = (n.created_at || '').slice(0, 10);
+        const lastmod = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : todayIso;
+        return {
+          path: `/news?article=${encodeURIComponent(String(n.id))}`,
+          changefreq: 'weekly',
+          priority: '0.7',
+          lastmod,
+        };
+      });
+
+    const allEntries = [...staticEntries, ...leagueEntries, ...newsEntries];
+
+    const urlXml = allEntries
+      .map(
+        (entry) => `  <url>
+    <loc>${escapeXml(`${baseUrl}${entry.path}`)}</loc>
+    <lastmod>${escapeXml(entry.lastmod)}</lastmod>
+    <changefreq>${entry.changefreq}</changefreq>
+    <priority>${entry.priority}</priority>
+  </url>`
+      )
+      .join('\n');
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urlXml}
+</urlset>`;
+
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=1800, s-maxage=1800, stale-while-revalidate=3600');
+    res.send(xml);
   });
 
   // Rate limiting on API & Media proxy routes

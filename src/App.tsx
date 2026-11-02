@@ -48,7 +48,61 @@ const NOTIFIED_STORAGE_KEY = 'ahmedSportNotifiedMatchesV1';
 
 type MatchStatusFilter = 'all' | 'live' | 'upcoming' | 'finished';
 
+function parseRouteFromLocation(): {
+  page: PageView;
+  competitionId?: string;
+  articleId?: string;
+  matchId?: string;
+} {
+  if (typeof window === 'undefined') return { page: 'home' };
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
+  const params = new URLSearchParams(window.location.search);
+  const comp = params.get('competition') || undefined;
+  const articleId = params.get('article') || undefined;
+  const matchId = params.get('match') || undefined;
+
+  if (pathname === '/standings') return { page: 'standings', competitionId: comp };
+  if (pathname === '/scorers') return { page: 'scorers', competitionId: comp };
+  if (pathname === '/predictions') return { page: 'predictions' };
+  if (pathname === '/search') return { page: 'search' };
+  if (pathname === '/news') {
+    return articleId
+      ? { page: 'news-detail', articleId }
+      : { page: 'news' };
+  }
+  if (matchId) return { page: 'match-details', matchId };
+  return { page: 'home', competitionId: comp };
+}
+
+function buildPathForPage(
+  target: PageView,
+  opts?: { competitionId?: string; articleId?: string; matchId?: string }
+): string {
+  if (target === 'standings') {
+    return opts?.competitionId
+      ? `/standings?competition=${encodeURIComponent(opts.competitionId)}`
+      : '/standings';
+  }
+  if (target === 'scorers') {
+    return opts?.competitionId
+      ? `/scorers?competition=${encodeURIComponent(opts.competitionId)}`
+      : '/scorers';
+  }
+  if (target === 'predictions') return '/predictions';
+  if (target === 'news') return '/news';
+  if (target === 'news-detail' && opts?.articleId) {
+    return `/news?article=${encodeURIComponent(opts.articleId)}`;
+  }
+  if (target === 'match-details' && opts?.matchId) {
+    return `/?match=${encodeURIComponent(opts.matchId)}`;
+  }
+  if (target === 'search') return '/search';
+  return '/';
+}
+
 export default function App() {
+  const initialRoute = useMemo(() => parseRouteFromLocation(), []);
+
   const [lang, setLang] = useState<Language>(() => {
     try {
       const saved = localStorage.getItem(LANG_STORAGE_KEY);
@@ -58,7 +112,7 @@ export default function App() {
     }
   });
 
-  const [page, setPage] = useState<PageView>('home');
+  const [page, setPage] = useState<PageView>(initialRoute.page);
   const [toastMessage, setToastMessage] = useState('');
 
   // Schedule state
@@ -78,9 +132,25 @@ export default function App() {
   const [newsLoading, setNewsLoading] = useState(true);
 
   // Selected entity state for drill-downs
-  const [selectedMatch, setSelectedMatch] = useState<MatchItem | null>(null);
-  const [selectedCompetitionId, setSelectedCompetitionId] = useState<string>('938652');
-  const [selectedArticle, setSelectedArticle] = useState<NewsItem | null>(null);
+  const [selectedMatch, setSelectedMatch] = useState<MatchItem | null>(
+    initialRoute.matchId
+      ? {
+          id: initialRoute.matchId,
+          date: '',
+          time: '',
+          state: 'upcoming',
+          tournament: { id: '', name: '', logo: '' },
+          home_team: { id: '', name: '—', logo: '', score: 0 },
+          away_team: { id: '', name: '—', logo: '', score: 0 },
+        }
+      : null
+  );
+  const [selectedCompetitionId, setSelectedCompetitionId] = useState<string>(
+    initialRoute.competitionId || '938652'
+  );
+  const [selectedArticle, setSelectedArticle] = useState<NewsItem | null>(
+    initialRoute.articleId ? { id: initialRoute.articleId, title: '' } : null
+  );
   const [selectedTeam, setSelectedTeam] = useState<{ id: string; name: string } | null>(null);
 
   // Match Notification Subscriptions & Push Banner Stack
@@ -382,27 +452,88 @@ export default function App() {
     return Array.from(map.values());
   }, [filteredMatches]);
 
+  // Sync browser Back/Forward navigation and dynamic SEO <title> + <link rel="canonical">
+  useEffect(() => {
+    const onPopState = () => {
+      const route = parseRouteFromLocation();
+      setPage(route.page);
+      if (route.competitionId) setSelectedCompetitionId(route.competitionId);
+      if (route.articleId) setSelectedArticle({ id: route.articleId, title: '' });
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  useEffect(() => {
+    const brand = t('siteName');
+    const sectionTitle =
+      page === 'standings'
+        ? `${t('standingsTitle')} | ${brand}`
+        : page === 'scorers'
+        ? `${t('scorersTitle')} | ${brand}`
+        : page === 'predictions'
+        ? `${t('predictionsTitle')} | ${brand}`
+        : page === 'news' || page === 'news-detail'
+        ? `${selectedArticle?.title || t('newsTitle')} | ${brand}`
+        : page === 'search'
+        ? `${t('search')} | ${brand}`
+        : lang === 'en'
+        ? 'Ahmed Sport | Live Football Schedule & Scores'
+        : 'أحمد سبورت | جدول ومواعيد مباريات اليوم والنتائج المباشرة';
+
+    document.title = sectionTitle;
+
+    let canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    if (!canonical) {
+      canonical = document.createElement('link');
+      canonical.rel = 'canonical';
+      document.head.appendChild(canonical);
+    }
+    canonical.href = window.location.origin + window.location.pathname + window.location.search;
+  }, [page, lang, t, selectedArticle]);
+
+  const pushRouteUrl = (nextPath: string) => {
+    try {
+      const current = window.location.pathname + window.location.search;
+      if (current !== nextPath) {
+        window.history.pushState({}, '', nextPath);
+      }
+    } catch {
+      // Ignore history errors in restricted environments
+    }
+  };
+
   // Navigation Handlers
   const handleNavigate = (target: PageView) => {
     setPage(target);
+    pushRouteUrl(
+      buildPathForPage(target, {
+        competitionId:
+          target === 'standings' || target === 'scorers' ? selectedCompetitionId : undefined,
+      })
+    );
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleOpenMatch = (match: MatchItem) => {
     setSelectedMatch(match);
     setPage('match-details');
+    pushRouteUrl(buildPathForPage('match-details', { matchId: String(match.id) }));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSelectCompetition = (compId: string) => {
+    const nextComp = compId || selectedCompetitionId;
     if (compId) setSelectedCompetitionId(compId);
     setPage('standings');
+    pushRouteUrl(buildPathForPage('standings', { competitionId: nextComp }));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleOpenArticle = (article: NewsItem) => {
     setSelectedArticle(article);
     setPage('news-detail');
+    pushRouteUrl(buildPathForPage('news-detail', { articleId: String(article.id) }));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 

@@ -3,6 +3,8 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "cleanUrls": false,
+  "trailingSlash": false,
   "headers": [
     {
       "source": "/(.*)",
@@ -18,6 +20,18 @@
   ],
   "rewrites": [
     {
+      "source": "/google519f6f89d95e2bc9.html",
+      "destination": "/api?__seo=google-verify"
+    },
+    {
+      "source": "/sitemap.xml",
+      "destination": "/api?__seo=sitemap"
+    },
+    {
+      "source": "/robots.txt",
+      "destination": "/api?__seo=robots"
+    },
+    {
       "source": "/api/v1/:endpoint",
       "destination": "/api?__endpoint=:endpoint"
     },
@@ -30,7 +44,7 @@
       "destination": "/api?__mediapath=:path*"
     },
     {
-      "source": "/((?!api/|media/|assets/).*)",
+      "source": "/((?!api/|media/|assets/|google519f6f89d95e2bc9\\.html|sitemap\\.xml|robots\\.txt|favicon\\.ico).*)",
       "destination": "/index.html"
     }
   ]
