@@ -1,0 +1,6 @@
+{
+  "name": "أحمد سبورت | Ahmed Sport",
+  "description": "منصة أحمد سبورت لمتابعة مواعيد ونتائج مباريات اليوم بث مباشر بتوقيت الرياض، ترتيب البطولات، الهدافين، التشكيلات، وآخر الأخبار الكروية.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
